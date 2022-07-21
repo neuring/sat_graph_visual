@@ -1,4 +1,3 @@
-use kdtree::KdTree;
 use macroquad::prelude::Vec2;
 
 pub type NodeId = usize;
@@ -43,18 +42,6 @@ impl Graph {
 
     pub fn node_size(&self) -> usize {
         self.nodes.len()
-    }
-
-    pub fn build_kdtree(&self) -> KdTree<f32, NodeId, [f32; 2]> {
-        let mut kdtree = KdTree::new(2);
-
-        for (node_id, node) in self.nodes.iter().enumerate() {
-            kdtree
-                .add(node.pos.as_ref().to_owned(), node_id)
-                .unwrap_or_else(|_| panic!("couldn't add node {node:?}"))
-        }
-
-        kdtree
     }
 }
 

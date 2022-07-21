@@ -1,15 +1,6 @@
-use std::vec;
+use macroquad::prelude::{vec2, Vec2};
 
-use kdtree::{
-    distance::{self, squared_euclidean},
-    KdTree,
-};
-use macroquad::{
-    prelude::{draw_line, vec2, Vec2, RED},
-    ui::root_ui,
-};
-
-use crate::graph::{Graph, NodeId};
+use crate::graph::Graph;
 
 pub struct Physics {
     pub spring_force: f32,
@@ -17,37 +8,36 @@ pub struct Physics {
     pub frame_multiplier: f32,
 }
 
-pub fn update_positions(
-    config: &Physics,
-    graph: &mut Graph,
-    frametime: f32,
-) -> KdTree<f32, NodeId, [f32; 2]> {
+pub fn update_positions(config: &Physics, graph: &mut Graph, frametime: f32) {
     const EQUILIBRIUM_LEN: f32 = 4.;
     const STIFFNESS: f32 = 1.;
     const AIR_RESISTANCE: f32 = 0.8;
 
-    let kdtree = graph.build_kdtree();
+    //let kdtree = graph.build_kdtree();
 
     for node_id in 0..graph.nodes.len() {
         let node = &graph.nodes[node_id];
 
         // Repell from every other node.
         let mut repell_vel = vec2(0., 0.);
-        for (squared_distance, &other_node_id) in kdtree
-            .iter_nearest(node.pos.as_ref(), &kdtree::distance::squared_euclidean)
-            .unwrap()
-        {
+        for other_node_id in 0..graph.nodes.len() {
+            let other_node = &graph[other_node_id];
+
             if other_node_id == node_id {
                 continue;
             }
 
-            let force = 5. / squared_distance.sqrt();
+            let squared_distance = node.pos.distance_squared(other_node.pos);
+
+            let force = 5. / f32::max(squared_distance.sqrt(), 0.0000001);
             if force < 0.001 {
                 break;
             }
 
             let other_node = &graph.nodes[other_node_id];
-            let dir = -(other_node.pos - node.pos).normalize();
+            let dir = -(other_node.pos - node.pos)
+                .try_normalize()
+                .unwrap_or_default();
             repell_vel += dir * force;
         }
 
@@ -60,7 +50,9 @@ pub fn update_positions(
             let delta = distance - EQUILIBRIUM_LEN;
             let force = STIFFNESS * delta;
 
-            let dir = (neighbor.pos - node.pos).normalize();
+            let dir = (neighbor.pos - node.pos)
+                .try_normalize()
+                .unwrap_or_default();
 
             spring_vel += dir * force;
         }
@@ -89,6 +81,4 @@ pub fn update_positions(
         //    RED,
         //);
     }
-
-    kdtree
 }

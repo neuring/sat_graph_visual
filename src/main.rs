@@ -1,6 +1,5 @@
 use anyhow::{anyhow, Context};
 use graph::{Graph, NodeId};
-use kdtree::distance::squared_euclidean;
 use macroquad::{
     hash,
     prelude::*,
@@ -80,9 +79,9 @@ impl MouseState {
     fn update(&mut self, view: &ViewState) {}
 }
 
-fn draw_line(view_state: &mut ViewState, start: Vec2, end: Vec2, color: Color) {
+fn draw_line(view_state: &mut ViewState, start: Vec2, end: Vec2, thickness: f32, color: Color) {
     let r = 1. / view_state.zoom;
-    macroquad::prelude::draw_line(start.x, start.y, end.x, end.y, r * 0.005, color);
+    macroquad::prelude::draw_line(start.x, start.y, end.x, end.y, r * thickness, color);
 }
 
 fn draw_circle(view_state: &mut ViewState, pos: Vec2, r: f32, color: Color) {
@@ -135,6 +134,7 @@ async fn main() -> anyhow::Result<()> {
         repell_force: 1.,
         frame_multiplier: 1.,
     };
+    let mut icon_size = 1.;
 
     loop {
         clear_background(WHITE);
@@ -143,31 +143,36 @@ async fn main() -> anyhow::Result<()> {
             .label("config")
             .titlebar(true)
             .ui(&mut *root_ui(), |ui| {
-                ui.slider(hash!(), "spring", 0.1f32..10.0, &mut config.spring_force);
-                ui.slider(hash!(), "repell", 0.1f32..10.0, &mut config.repell_force);
+                ui.slider(hash!(), "spring", 0.1f32..30.0, &mut config.spring_force);
+                ui.slider(hash!(), "repell", 0.1f32..30.0, &mut config.repell_force);
                 ui.slider(hash!(), "frame", 0.1f32..10.0, &mut config.frame_multiplier);
+                ui.slider(hash!(), "icon_size", 0.1f32..1.1, &mut icon_size);
             });
 
         view_state.update_cam();
 
         let mouse_pos = mouse_position().into();
         let mouse_pos = view_state.camera.screen_to_world(mouse_pos);
-        draw_circle(&mut view_state, mouse_pos, 0.02, GREEN);
 
-        let kdtree = update_positions(&config, &mut graph, get_frame_time());
+        update_positions(&config, &mut graph, get_frame_time());
 
         if is_mouse_button_pressed(MouseButton::Left) {
-            let nodes = kdtree
-                .within(mouse_pos.as_ref(), 10. * 10., &squared_euclidean)
-                .unwrap();
-            let nodes = nodes.into_iter().map(|(_, &node)| node).collect();
+            let r = 1. / view_state.zoom * 0.01;
+            let nodes = graph
+                .nodes()
+                .enumerate()
+                .filter_map(|(id, node)| {
+                    (mouse_pos.distance_squared(node.pos) < r * r).then_some(id)
+                })
+                .collect::<Vec<_>>();
+
             mouse_state.dragged_nodes = Some(nodes);
         }
 
         if is_mouse_button_down(MouseButton::Left) {
             if let Some(nodes) = &mut mouse_state.dragged_nodes {
                 for &mut node in nodes {
-                    graph[node].pos = mouse_pos + rand_vec2();
+                    graph[node].pos = mouse_pos + rand_vec2() * 10.;
                 }
             }
         }
@@ -183,18 +188,24 @@ async fn main() -> anyhow::Result<()> {
                 }
                 let neighbor = &graph[neighbor_id];
 
-                draw_line(&mut view_state, node.pos, neighbor.pos, BLACK);
+                draw_line(
+                    &mut view_state,
+                    node.pos,
+                    neighbor.pos,
+                    0.005 * icon_size,
+                    BLACK,
+                );
             }
         }
 
         for &cls_node in &clause_nodes {
             let cls_node = &graph[cls_node];
-            draw_circle(&mut view_state, cls_node.pos, 0.01, BLUE);
+            draw_circle(&mut view_state, cls_node.pos, 0.01 * icon_size, BLUE);
         }
 
         for &var_node in &variable_nodes {
             let var_node = &graph[var_node];
-            draw_circle(&mut view_state, var_node.pos, 0.01, ORANGE);
+            draw_circle(&mut view_state, var_node.pos, 0.01 * icon_size, ORANGE);
         }
 
         //let avg_dir = graph.nodes().map(|node| &node.vel).sum::<Vec2>() / graph.node_size() as f32;
