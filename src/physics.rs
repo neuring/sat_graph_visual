@@ -1,62 +1,94 @@
-use macroquad::prelude::{draw_line, vec2, RED};
+use std::vec;
 
-use crate::graph::Graph;
+use kdtree::{
+    distance::{self, squared_euclidean},
+    KdTree,
+};
+use macroquad::{
+    prelude::{draw_line, vec2, Vec2, RED},
+    ui::root_ui,
+};
 
-impl Graph {
-    pub fn update_positions(&mut self, frametime: f32) {
-        const EQUILIBRIUM_LEN: f32 = 4.;
-        const STIFFNESS: f32 = 1.;
-        const AIR_RESISTANCE: f32 = 0.95;
+use crate::graph::{Graph, NodeId};
 
-        const ORIGIN_FORCE: f32 = 0.5;
+pub struct Physics {
+    pub spring_force: f32,
+    pub repell_force: f32,
+    pub frame_multiplier: f32,
+}
 
-        for node_id in 0..self.nodes.len() {
-            let mut vel_acc = vec2(0., 0.);
-            let node = &self.nodes[node_id];
+pub fn update_positions(
+    config: &Physics,
+    graph: &mut Graph,
+    frametime: f32,
+) -> KdTree<f32, NodeId, [f32; 2]> {
+    const EQUILIBRIUM_LEN: f32 = 4.;
+    const STIFFNESS: f32 = 1.;
+    const AIR_RESISTANCE: f32 = 0.8;
 
-            // Repell from every other node.
-            for other_node_id in 0..self.nodes.len() {
-                if other_node_id == node_id {
-                    continue;
-                }
+    let kdtree = graph.build_kdtree();
 
-                let other_node = &self.nodes[other_node_id];
+    for node_id in 0..graph.nodes.len() {
+        let node = &graph.nodes[node_id];
 
-                let dir = -(other_node.pos - node.pos).normalize();
-                let distance = other_node.pos.distance(node.pos);
-                let force = 20. * f32::exp(-0.00001 * distance);
-                vel_acc += dir * force;
+        // Repell from every other node.
+        let mut repell_vel = vec2(0., 0.);
+        for (squared_distance, &other_node_id) in kdtree
+            .iter_nearest(node.pos.as_ref(), &kdtree::distance::squared_euclidean)
+            .unwrap()
+        {
+            if other_node_id == node_id {
+                continue;
             }
-            vel_acc = vel_acc.normalize() * 20000.;
 
-            // Spring force for every neighbor
-            for &neighbor_id in &node.neighbors {
-                let neighbor = &self.nodes[neighbor_id];
-
-                let distance = node.pos.distance(neighbor.pos);
-                let delta = distance - EQUILIBRIUM_LEN;
-                let force = STIFFNESS * delta;
-
-                let dir = (neighbor.pos - node.pos).normalize();
-                vel_acc += dir * force;
+            let force = 5. / squared_distance.sqrt();
+            if force < 0.001 {
+                break;
             }
 
-            // Push towards center.
-            vel_acc += -node.pos.normalize() * ORIGIN_FORCE;
-
-            let node = &mut self.nodes[node_id];
-            node.vel += vel_acc * frametime;
-            node.vel *= AIR_RESISTANCE;
-
-            node.pos += node.vel * frametime;
-            draw_line(
-                node.pos.x,
-                node.pos.y,
-                (node.pos + node.vel).x,
-                (node.pos + node.vel).y,
-                1.,
-                RED,
-            );
+            let other_node = &graph.nodes[other_node_id];
+            let dir = -(other_node.pos - node.pos).normalize();
+            repell_vel += dir * force;
         }
+
+        let mut spring_vel = vec2(0., 0.);
+        // Spring force for every neighbor
+        for &neighbor_id in &node.neighbors {
+            let neighbor = &graph.nodes[neighbor_id];
+
+            let distance = node.pos.distance(neighbor.pos);
+            let delta = distance - EQUILIBRIUM_LEN;
+            let force = STIFFNESS * delta;
+
+            let dir = (neighbor.pos - node.pos).normalize();
+
+            spring_vel += dir * force;
+        }
+
+        let vec_acc = repell_vel * config.repell_force + spring_vel * config.spring_force;
+        let vec_acc = vec_acc.clamp_length_max(1000.);
+
+        let node = &mut graph.nodes[node_id];
+        node.vel += vec_acc;
+        node.vel *= AIR_RESISTANCE;
+
+        node.tmp_pos = node.pos + node.vel * frametime * config.frame_multiplier;
     }
+
+    let avg_pos = graph.nodes.iter().map(|node| &node.pos).sum::<Vec2>() / graph.node_size() as f32;
+
+    for node in &mut graph.nodes {
+        std::mem::swap(&mut node.pos, &mut node.tmp_pos);
+        node.pos -= avg_pos;
+        //draw_line(
+        //    node.pos.x,
+        //    node.pos.y,
+        //    (node.pos + node.vel).x,
+        //    (node.pos + node.vel).y,
+        //    1.,
+        //    RED,
+        //);
+    }
+
+    kdtree
 }

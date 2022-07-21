@@ -1,6 +1,12 @@
 use anyhow::{anyhow, Context};
-use graph::Graph;
-use macroquad::prelude::*;
+use graph::{Graph, NodeId};
+use kdtree::distance::squared_euclidean;
+use macroquad::{
+    hash,
+    prelude::*,
+    ui::{root_ui, widgets},
+};
+use physics::{update_positions, Physics};
 
 mod dimacs;
 mod graph;
@@ -67,16 +73,11 @@ impl ViewState {
 
 #[derive(Default)]
 struct MouseState {
-    drag_start: Option<Vec2>,
+    dragged_nodes: Option<Vec<NodeId>>,
 }
 
 impl MouseState {
-    fn update(&mut self, view: &ViewState) {
-        if is_mouse_button_pressed(MouseButton::Left) {
-            let pos = view.camera.screen_to_world(mouse_position().into());
-            self.drag_start = Some(pos);
-        }
-    }
+    fn update(&mut self, view: &ViewState) {}
 }
 
 fn draw_line(view_state: &mut ViewState, start: Vec2, end: Vec2, color: Color) {
@@ -127,13 +128,53 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let mut view_state = ViewState::new();
+    let mut mouse_state = MouseState::default();
+
+    let mut config = Physics {
+        spring_force: 1.,
+        repell_force: 1.,
+        frame_multiplier: 1.,
+    };
 
     loop {
         clear_background(WHITE);
 
+        widgets::Window::new(hash!(), vec2(0., 100. + screen_height()), vec2(620., 150.))
+            .label("config")
+            .titlebar(true)
+            .ui(&mut *root_ui(), |ui| {
+                ui.slider(hash!(), "spring", 0.1f32..10.0, &mut config.spring_force);
+                ui.slider(hash!(), "repell", 0.1f32..10.0, &mut config.repell_force);
+                ui.slider(hash!(), "frame", 0.1f32..10.0, &mut config.frame_multiplier);
+            });
+
         view_state.update_cam();
 
-        graph.update_positions(get_frame_time() * 3.);
+        let mouse_pos = mouse_position().into();
+        let mouse_pos = view_state.camera.screen_to_world(mouse_pos);
+        draw_circle(&mut view_state, mouse_pos, 0.02, GREEN);
+
+        let kdtree = update_positions(&config, &mut graph, get_frame_time());
+
+        if is_mouse_button_pressed(MouseButton::Left) {
+            let nodes = kdtree
+                .within(mouse_pos.as_ref(), 10. * 10., &squared_euclidean)
+                .unwrap();
+            let nodes = nodes.into_iter().map(|(_, &node)| node).collect();
+            mouse_state.dragged_nodes = Some(nodes);
+        }
+
+        if is_mouse_button_down(MouseButton::Left) {
+            if let Some(nodes) = &mut mouse_state.dragged_nodes {
+                for &mut node in nodes {
+                    graph[node].pos = mouse_pos + rand_vec2();
+                }
+            }
+        }
+
+        if is_mouse_button_released(MouseButton::Left) {
+            mouse_state.dragged_nodes = None;
+        }
 
         for (id, node) in graph.nodes().enumerate() {
             for &neighbor_id in &node.neighbors {
@@ -156,9 +197,10 @@ async fn main() -> anyhow::Result<()> {
             draw_circle(&mut view_state, var_node.pos, 0.01, ORANGE);
         }
 
-        let pos = mouse_position().into();
-        let pos = view_state.camera.screen_to_world(pos);
-        draw_circle(&mut view_state, pos, 0.02, GREEN);
+        //let avg_dir = graph.nodes().map(|node| &node.vel).sum::<Vec2>() / graph.node_size() as f32;
+
+        root_ui().label(None, &format!("FPS {}", get_fps()));
+        root_ui().label(None, &format!("mouse pos {}", mouse_pos));
 
         next_frame().await
     }

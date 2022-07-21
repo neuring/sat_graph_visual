@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.58"
+kdtree = "0.6.0"
 macroquad = "0.3.23"
 
 [features]
